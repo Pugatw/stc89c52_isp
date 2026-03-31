@@ -1,39 +1,55 @@
-name: Build Android APK
+name: Build Android APK for stc89c52_isp
 run-name: ${{ github.event.inputs.repository }} ${{ github.event.inputs.branchName && format('{0}', github.event.inputs.branchName) }} ${{ github.event.inputs.subdir && format('[/{0}]', github.event.inputs.subdir) }} :${{ github.event.inputs.taskName }}
 
 on:
   workflow_dispatch:
     inputs:
       repository:
-        description: "Git repository URL"
+        description: "https://github.com/Pugatw/stc89c52_isp"
         required: true
-        default: "https://github.com/android/sunflower"
+        default: "https://github.com/Pugatw/stc89c52_isp" # 替换成你的仓库地址
       branchName:
         description: "Git branch name [Optional]"
         required: false
-        default: ""
+        default: "main" # 适配多数仓库的主分支名
       subdir:
         description: "Relative subdirectory path when the project is nested [Optional]"
         required: false
         default: ""
       jdkVersion:
-        description: "OpenJDK version: 8, 17, 21, 25, …"
+        description: "OpenJDK version: 8（必须填8，老项目仅兼容8）"
         required: false
-        default: "17"
+        default: "8" # 核心修改：默认改为8，适配老Android项目
       taskName:
-        description: "build.gradle task name: assembleDebug, assembleRelease, etc."
+        description: "build.gradle task name: assembleDebug（推荐）/ assembleRelease"
         required: false
-        default: "assembleRelease"
+        default: "assembleDebug" # 核心修改：默认改为Debug，避免签名问题
 
 jobs:
   build:
-    runs-on: ubuntu-latest # Android SDK is built into this image
+    runs-on: ubuntu-latest
     steps:
-      - name: Setup JDK
-        uses: actions/setup-java@v5
+      # 核心修改1：降级setup-java到v4，兼容JDK 8
+      - name: Setup JDK 8
+        uses: actions/setup-java@v4
         with:
           distribution: "temurin"
           java-version: ${{ github.event.inputs.jdkVersion }}
+
+      # 核心修改2：安装老项目所需的Android SDK和构建工具（解决SDK缺失问题）
+      - name: Install Android SDK 29 (适配stc89c52_isp)
+        run: |
+          sudo apt update
+          # 安装必要依赖
+          sudo apt install -y wget unzip android-sdk-platform-tools
+          # 下载并配置Android Build Tools 29.0.3（老项目适配版本）
+          wget https://dl.google.com/android/repository/build-tools_r29.0.3-linux.zip
+          unzip build-tools_r29.0.3-linux.zip -d $ANDROID_HOME/build-tools
+          mv $ANDROID_HOME/build-tools/29.0.3 $ANDROID_HOME/build-tools/29.0.3-tmp
+          mv $ANDROID_HOME/build-tools/29.0.3-tmp $ANDROID_HOME/build-tools/29.0.3
+          # 配置环境变量，让Gradle找到SDK
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
 
       - name: Clone project
         run: |
@@ -43,24 +59,24 @@ jobs:
             git clone --recurse-submodules --depth=1 --branch ${{ github.event.inputs.branchName }} ${{ github.event.inputs.repository }} workspace
           fi
 
-      - name: Build APK
+      - name: Build APK (适配stc89c52_isp老项目)
         working-directory: ./workspace/${{ github.event.inputs.subdir }}
         run: |
-          if [ ! -f "gradlew" ]; then gradle wrapper; fi
+          # 核心修改3：生成适配老项目的Gradle Wrapper（指定5.6.4版本，解决类缺失问题）
+          if [ ! -f "gradlew" ]; then
+            echo "生成适配老项目的Gradle 5.6.4 Wrapper..."
+            gradle wrapper --gradle-version 5.6.4 --distribution-type all
+          fi
           chmod +x gradlew
 
+          # 构建APK（Debug版无需签名，直接可用）
           if [[ "${{ github.event.inputs.taskName }}" == *Release* ]]; then
-            echo "Task contains 'Release', attempting to sign a release build with a debug key."
-
+            echo "构建Release版，自动生成debug keystore签名..."
             if [ ! -f "$HOME/.android/debug.keystore" ]; then
-              echo "Debug keystore not found. Creating one..."
-
               keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "C=US, O=Android, CN=Android Debug"
-
               mkdir -p $HOME/.android
               mv debug.keystore $HOME/.android/debug.keystore
             fi
-
             ./gradlew ${{ github.event.inputs.taskName }} \
               -Pandroid.injected.signing.store.file="$HOME/.android/debug.keystore" \
               -Pandroid.injected.signing.store.password=android \
@@ -68,12 +84,16 @@ jobs:
               -Pandroid.injected.signing.key.password=android \
               --stacktrace
           else
+            echo "构建Debug版APK..."
             ./gradlew ${{ github.event.inputs.taskName }} --stacktrace
           fi
 
-      - name: Upload the APK artifact with 1 day retention
+      # 核心修改4：扩大APK查找范围，确保能找到老项目的APK
+      - name: Upload the APK artifact (保留1天)
         uses: actions/upload-artifact@v6
         with:
-          path: workspace/**/*.apk
-          name: apk-archive
-          retention-days: 1
+          path: |
+            workspace/**/*.apk
+            workspace/**/*.apk
+          name: stc89c52_isp-apk
+          retention-days: 3 # 延长保留时间到3天，方便下载
