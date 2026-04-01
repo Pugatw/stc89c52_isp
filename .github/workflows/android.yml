@@ -3,21 +3,19 @@ run-name: ${{ github.event.inputs.repository }} ${{ github.event.inputs.branchNa
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  # 统一Android SDK路径，官方actions会自动写入
-  ANDROID_HOME: /usr/local/lib/android/sdk
-  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-  # 固定Gradle版本，适配老项目
-  GRADLE_VERSION: 5.6.4
+  # 核心修复1：显式指定Android SDK路径，避免系统路径混乱
+  ANDROID_HOME: /home/runner/android-sdk
+  ANDROID_SDK_ROOT: /home/runner/android-sdk
 
 on:
   workflow_dispatch:
     inputs:
       repository:
-        description: "Pugatw/stc89c52_isp/"
+        description: "https://github.com/Pugatw/stc89c52_isp/"
         required: true
-        default: "Pugatw/stc89c52_isp/"
+        default: "https://github.com/你的用户名/stc89c52_isp" # 替换成你的仓库地址
       branchName:
-        description: "Git branch name [Optional]"
+        description: "https://github.com/Pugatw/stc89c52_isp/"
         required: false
         default: "main"
       subdir:
@@ -37,17 +35,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # 1. 检出代码（官方actions比手动git clone更稳定）
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.event.inputs.repository }}
-          ref: ${{ github.event.inputs.branchName || 'main' }}
-          submodules: recursive
-          path: workspace
-
-      # 2. 安装JDK 8（严格匹配老项目要求）
-      - name: Setup JDK 8
+      - name: Setup JDK 8 (兼容Node.js 24)
         uses: actions/setup-java@v5
         with:
           distribution: "temurin"
@@ -55,39 +43,41 @@ jobs:
           java-package: jdk
           architecture: x64
 
-      # 3. 安装Android SDK（官方工具，一键搞定，彻底解决路径问题）
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          # 适配stc89c52_isp老项目的SDK版本
-          android-version: 29
-          build-tools-version: 29.0.3
-          ndk-version: "" # 老项目不需要NDK，留空避免冲突
-
-      # 4. 生成Gradle Wrapper（彻底解决gradlew找不到的问题）
-      - name: Generate Gradle Wrapper
-        working-directory: ./workspace/${{ github.event.inputs.subdir }}
+      # 核心修复2：重新写SDK安装逻辑，手动创建路径+适配解压规则
+      - name: Install Android SDK 29 (修复路径问题)
         run: |
-          # 用官方Gradle wrapper工具，无需全局gradle
-          if [ ! -f "gradlew" ]; then
-            echo "生成Gradle $GRADLE_VERSION Wrapper..."
-            # 下载官方wrapper脚本，生成gradlew
-            wget -O gradlew https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-wrapper.jar
-            echo '#!/bin/sh' > gradlew
-            echo 'exec java -jar "$0" "$@"' >> gradlew
-            chmod +x gradlew
-            # 生成完整wrapper配置
-            ./gradlew wrapper --gradle-version $GRADLE_VERSION --distribution-type all
+          # 1. 创建自定义SDK路径，避免系统默认路径冲突
+          mkdir -p $ANDROID_HOME/build-tools
+          # 2. 安装基础依赖
+          sudo apt update && sudo apt install -y wget unzip android-sdk-platform-tools
+          # 3. 下载Build Tools 29.0.3（指定保存路径，避免解压混乱）
+          wget https://dl.google.com/android/repository/build-tools_r29.0.3-linux.zip -O $ANDROID_HOME/build-tools-29.0.3.zip
+          # 4. 解压到指定路径，直接生成29.0.3文件夹（避免mv命令出错）
+          unzip $ANDROID_HOME/build-tools-29.0.3.zip -d $ANDROID_HOME/build-tools/
+          # 5. 验证路径是否存在（调试用，确保路径正确）
+          ls -la $ANDROID_HOME/build-tools/
+          # 6. 配置环境变量，让Gradle能找到SDK
+          echo "PATH=$ANDROID_HOME/build-tools/29.0.3:$PATH" >> $GITHUB_ENV
+
+      - name: Clone project
+        run: |
+          if [[ -z "${{ github.event.inputs.branchName }}" ]]; then
+            git clone --recurse-submodules --depth=1 ${{ github.event.inputs.repository }} workspace
+          else
+            git clone --recurse-submodules --depth=1 --branch ${{ github.event.inputs.branchName }} ${{ github.event.inputs.repository }} workspace
           fi
-          # 确保权限正确
-          chmod +x gradlew
-          # 验证文件存在
-          ls -la gradlew
 
-      # 5. 构建APK（Debug/Release双支持）
-      - name: Build APK
+      - name: Build APK (适配stc89c52_isp老项目)
         working-directory: ./workspace/${{ github.event.inputs.subdir }}
         run: |
+          # 生成Gradle 5.6.4 Wrapper
+          if [ ! -f "gradlew" ]; then
+            echo "生成适配老项目的Gradle 5.6.4 Wrapper..."
+            gradle wrapper --gradle-version 5.6.4 --distribution-type all
+          fi
+          chmod +x gradlew
+
+          # 构建APK（Debug版）
           if [[ "${{ github.event.inputs.taskName }}" == *Release* ]]; then
             echo "构建Release版，自动生成debug keystore签名..."
             if [ ! -f "$HOME/.android/debug.keystore" ]; then
@@ -100,22 +90,16 @@ jobs:
               -Pandroid.injected.signing.store.password=android \
               -Pandroid.injected.signing.key.alias=androiddebugkey \
               -Pandroid.injected.signing.key.password=android \
-              -Pandroid.buildToolsVersion=29.0.3 \
-              -Pandroid.compileSdkVersion=29 \
               --stacktrace
           else
             echo "构建Debug版APK..."
-            ./gradlew ${{ github.event.inputs.taskName }} \
-              -Pandroid.buildToolsVersion=29.0.3 \
-              -Pandroid.compileSdkVersion=29 \
-              --stacktrace
+            ./gradlew ${{ github.event.inputs.taskName }} --stacktrace -Pandroid.buildToolsVersion=29.0.3 -Pandroid.compileSdkVersion=29
           fi
 
-      # 6. 上传APK产物
-      - name: Upload APK Artifact
+      - name: Upload the APK artifact (保留3天)
         uses: actions/upload-artifact@v6
         with:
           path: |
-            workspace/${{ github.event.inputs.subdir }}/**/*.apk
+            workspace/**/*.apk
           name: stc89c52_isp-apk
           retention-days: 3
