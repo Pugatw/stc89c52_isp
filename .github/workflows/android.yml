@@ -1,43 +1,121 @@
-# 工作流名称
-name: Android CI
+name: Build Android APK for stc89c52_isp
+run-name: ${{ github.event.inputs.repository }} ${{ github.event.inputs.branchName && format('{0}', github.event.inputs.branchName) }} ${{ github.event.inputs.subdir && format('[/{0}]', github.event.inputs.subdir) }} :${{ github.event.inputs.taskName }}
 
-# 触发条件：推代码到main分支 / 手动触发
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # 统一Android SDK路径，官方actions会自动写入
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+  # 固定Gradle版本，适配老项目
+  GRADLE_VERSION: 5.6.4
+
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:  # 手动触发开关（关键！新手优先用这个）
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "https://github.com/Pugatw/stc89c52_isp/"
+        required: true
+        default: "https://github.com/Pugatw/stc89c52_isp/"
+      branchName:
+        description: "Git branch name [Optional]"
+        required: false
+        default: "main"
+      subdir:
+        description: "Relative subdirectory path when the project is nested [Optional]"
+        required: false
+        default: ""
+      jdkVersion:
+        description: "OpenJDK version: 8（必须填8，老项目仅兼容8）"
+        required: false
+        default: "8"
+      taskName:
+        description: "build.gradle task name: assembleDebug（推荐）/ assembleRelease"
+        required: false
+        default: "assembleDebug"
 
-# 构建任务
 jobs:
   build:
-    # 运行环境：Ubuntu最新版
     runs-on: ubuntu-latest
-
     steps:
-      # 步骤1：拉取仓库代码
-      - uses: actions/checkout@v4
-
-      # 步骤2：配置JDK 11（适配这个老项目的Gradle版本）
-      - name: Set up JDK 11
-        uses: actions/setup-java@v4
+      # 1. 检出代码（官方actions比手动git clone更稳定）
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
-          java-version: '11'
-          distribution: 'temurin'
-          cache: gradle
+          repository: ${{ github.event.inputs.repository }}
+          ref: ${{ github.event.inputs.branchName || 'main' }}
+          submodules: recursive
+          path: workspace
 
-      # 步骤3：给gradlew添加可执行权限（避免权限报错）
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      # 步骤4：构建Debug版APK（核心！生成可安装的APK）
-      - name: Build Debug APK with Gradle
-        run: ./gradlew assembleDebug
-
-      # 步骤5：上传APK（编译成功后能下载）
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
+      # 2. 安装JDK 8（严格匹配老项目要求）
+      - name: Setup JDK 8
+        uses: actions/setup-java@v5
         with:
-          name: stc89c52_isp-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          distribution: "temurin"
+          java-version: ${{ github.event.inputs.jdkVersion }}
+          java-package: jdk
+          architecture: x64
+
+      # 3. 安装Android SDK（官方工具，一键搞定，彻底解决路径问题）
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # 适配stc89c52_isp老项目的SDK版本
+          android-version: 29
+          build-tools-version: 29.0.3
+          ndk-version: "" # 老项目不需要NDK，留空避免冲突
+
+      # 4. 生成Gradle Wrapper（彻底解决gradlew找不到的问题）
+      - name: Generate Gradle Wrapper
+        working-directory: ./workspace/${{ github.event.inputs.subdir }}
+        run: |
+          # 用官方Gradle wrapper工具，无需全局gradle
+          if [ ! -f "gradlew" ]; then
+            echo "生成Gradle $GRADLE_VERSION Wrapper..."
+            # 下载官方wrapper脚本，生成gradlew
+            wget -O gradlew https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-wrapper.jar
+            echo '#!/bin/sh' > gradlew
+            echo 'exec java -jar "$0" "$@"' >> gradlew
+            chmod +x gradlew
+            # 生成完整wrapper配置
+            ./gradlew wrapper --gradle-version $GRADLE_VERSION --distribution-type all
+          fi
+          # 确保权限正确
+          chmod +x gradlew
+          # 验证文件存在
+          ls -la gradlew
+
+      # 5. 构建APK（Debug/Release双支持）
+      - name: Build APK
+        working-directory: ./workspace/${{ github.event.inputs.subdir }}
+        run: |
+          if [[ "${{ github.event.inputs.taskName }}" == *Release* ]]; then
+            echo "构建Release版，自动生成debug keystore签名..."
+            if [ ! -f "$HOME/.android/debug.keystore" ]; then
+              keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "C=US, O=Android, CN=Android Debug"
+              mkdir -p $HOME/.android
+              mv debug.keystore $HOME/.android/debug.keystore
+            fi
+            ./gradlew ${{ github.event.inputs.taskName }} \
+              -Pandroid.injected.signing.store.file="$HOME/.android/debug.keystore" \
+              -Pandroid.injected.signing.store.password=android \
+              -Pandroid.injected.signing.key.alias=androiddebugkey \
+              -Pandroid.injected.signing.key.password=android \
+              -Pandroid.buildToolsVersion=29.0.3 \
+              -Pandroid.compileSdkVersion=29 \
+              --stacktrace
+          else
+            echo "构建Debug版APK..."
+            ./gradlew ${{ github.event.inputs.taskName }} \
+              -Pandroid.buildToolsVersion=29.0.3 \
+              -Pandroid.compileSdkVersion=29 \
+              --stacktrace
+          fi
+
+      # 6. 上传APK产物
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          path: |
+            workspace/${{ github.event.inputs.subdir }}/**/*.apk
+          name: stc89c52_isp-apk
+          retention-days: 3
