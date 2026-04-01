@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       repository:
-        description: "/Pugatw/stc89c52_isp/"
+        description: "Pugatw/stc89c52_isp/"
         required: true
-        default: "/Pugatw/stc89c52_isp/"
+        default: "Pugatw/stc89c52_isp/"
       branchName:
         description: "Git branch name [Optional]"
         required: false
