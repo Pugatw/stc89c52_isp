@@ -1,22 +1,9 @@
-name: Android CI
-
-# 触发规则：push到main自动触发，同时支持手动点击运行
-on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch: # 加了这行，就会出现Run workflow按钮
-
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-    # 1. 拉取项目代码
     - uses: actions/checkout@v4
 
-    # 2. 安装JDK 11（适配老Android项目，稳定兼容）
     - name: Set up JDK 11
       uses: actions/setup-java@v4
       with:
@@ -25,27 +12,22 @@ jobs:
         cache: gradle
 
     - name: Install Android SDK
-  run: |
-    # 自动接受 SDK 许可证（忽略可能的 broken pipe 错误）
-    yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
-    # 安装需要的 SDK 组件
-    $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-29" "build-tools;29.0.3"
+      run: |
+        # 自动接受 SDK 许可证（忽略可能的 broken pipe 错误）
+        yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+        # 安装需要的 SDK 组件
+        $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-29" "build-tools;29.0.3"
 
-    # 4. 彻底解决gradlew找不到的问题
     - name: Prepare gradlew
       run: |
-        # 如果项目没有gradlew，自动生成适配JDK11的稳定版本
         if [ ! -f gradlew ]; then
           gradle wrapper --gradle-version 6.7.1 --distribution-type all
         fi
-        # 赋予执行权限
         chmod +x gradlew
 
-    # 5. 构建Debug版APK（适配老项目）
     - name: Build APK
       run: ./gradlew assembleDebug -Pandroid.buildToolsVersion=29.0.3 -Pandroid.compileSdkVersion=29 --stacktrace
 
-    # 6. 自动上传构建好的APK，构建成功就能直接下载
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
