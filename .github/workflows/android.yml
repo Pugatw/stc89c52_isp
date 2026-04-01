@@ -48,12 +48,17 @@ jobs:
           java-package: jdk
           architecture: x64
 
-      # 3. 安装Android SDK（官方工具，自动处理路径）
+      # 3.修复：Setup Android SDK（仅修改这一步，其他完全不动）
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          android-version: 29
-          build-tools-version: 29.0.3
+          cmdline-tools-version: 12.0
+          accept-android-sdk-licenses: true
+          packages: |
+            platform-tools
+            platforms;android-29
+            build-tools;29.0.3
+
 
       # 4. 安装固定版本Gradle 5.6.4（100%兼容JDK8，不会再报版本错误）
       - name: Install Gradle 5.6.4
