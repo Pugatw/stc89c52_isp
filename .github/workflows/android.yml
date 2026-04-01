@@ -13,9 +13,9 @@ on:
       repository:
         description: "https://github.com/Pugatw/stc89c52_isp/"
         required: true
-        default: "https://github.com/你的用户名/stc89c52_isp" # 替换成你的仓库地址
+        default: "https://github.com/Pugatw/stc89c52_isp/" # 替换成你的仓库地址
       branchName:
-        description: "https://github.com/Pugatw/stc89c52_isp/"
+        description: "mins"
         required: false
         default: "main"
       subdir:
