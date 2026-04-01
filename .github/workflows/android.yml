@@ -24,12 +24,12 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    # 3. 安装项目必须的Android SDK，适配老项目
     - name: Install Android SDK
-      run: |
-        # 自动接受SDK许可证，安装你项目需要的29版本
-        yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1
-        $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-29" "build-tools;29.0.3"
+  run: |
+    # 自动接受 SDK 许可证（忽略可能的 broken pipe 错误）
+    yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+    # 安装需要的 SDK 组件
+    $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-29" "build-tools;29.0.3"
 
     # 4. 彻底解决gradlew找不到的问题
     - name: Prepare gradlew
