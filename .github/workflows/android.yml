@@ -8,11 +8,13 @@ on:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
+    # 1. 检出代码，和你原来的完全一致
     - uses: actions/checkout@v4
+
+    # 2. 设置JDK 11，和你原来的完全一致，保留缓存
     - name: set up JDK 11
       uses: actions/setup-java@v4
       with:
@@ -20,8 +22,23 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
-    - name: Build with Gradle
-      run: ./gradlew build
+    # 🔧 仅新增：安装Android SDK（Android项目构建必须的依赖，适配你的老项目）
+    - name: Setup Android SDK
+      run: |
+        # 自动同意SDK许可证，安装你项目需要的29版本SDK
+        yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1
+        $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-29" "build-tools;29.0.3"
 
+    # 🔧 修复：自动判断gradlew是否存在，不会再报找不到文件的错误
+    - name: Grant execute permission for gradlew
+      run: |
+        # 如果项目没有gradlew，自动生成适配JDK11的稳定版本
+        if [ ! -f gradlew ]; then
+          gradle wrapper --gradle-version 6.7.1 --distribution-type all
+        fi
+        # 赋予执行权限
+        chmod +x gradlew
+
+    # 3. 构建，和你原来的一致，仅加了老项目的版本适配参数
+    - name: Build with Gradle
+      run: ./gradlew build -Pandroid.buildToolsVersion=29.0.3 -Pandroid.compileSdkVersion=29 --stacktrace
