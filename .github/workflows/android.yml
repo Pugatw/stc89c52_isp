@@ -48,16 +48,23 @@ jobs:
           java-package: jdk
           architecture: x64
 
-      # 3.修复：Setup Android SDK（仅修改这一步，其他完全不动）
+      # 3.修复：Setup Android SDK（仅修改这一步，其他完全不动，解决Java版本冲突）
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: 12.0
-          accept-android-sdk-licenses: true
-          packages: |
-            platform-tools
-            platforms;android-29
-            build-tools;29.0.3
+        run: |
+          # 临时用JDK 17运行sdkmanager（仅这一步生效，不改变全局JDK 8）
+          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+          export PATH=$JAVA_HOME/bin:$PATH
+          
+          # 自动接受SDK许可证
+          yes | sdkmanager --licenses > /dev/null 2>&1
+          
+          # 安装项目需要的SDK版本，和老项目100%兼容
+          sdkmanager "platform-tools" "platforms;android-29" "build-tools;29.0.3"
+          
+          # 配置环境变量，让后续Gradle能正常找到SDK
+          echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> $GITHUB_ENV
+
 
 
       # 4. 安装固定版本Gradle 5.6.4（100%兼容JDK8，不会再报版本错误）
